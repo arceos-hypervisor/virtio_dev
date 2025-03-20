@@ -1,3 +1,5 @@
+#![no_std]
+
 mod devops_impl;
 mod virtio_device;
 

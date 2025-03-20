@@ -5,7 +5,7 @@ use axaddrspace::GuestPhysAddr;
 use axerrno::AxResult;
 use memory_addr::AddrRange;
 
-use crate::virtio::virtio_device::VirtioDevice;
+use crate::virtio_device::VirtioDevice;
 
 impl BaseDeviceOps for VirtioDevice {
     fn emu_type(&self) -> EmuDeviceType {
@@ -16,11 +16,11 @@ impl BaseDeviceOps for VirtioDevice {
         AddrRange::new(self.base_gpa.into(), (self.base_gpa + self.length).into())
     }
 
-    fn handle_read(&self, addr: GuestPhysAddr, width: usize) -> AxResult<usize> {
+    fn handle_read(&self, addr: GuestPhysAddr, _width: usize) -> AxResult<usize> {
         unsafe { Ok(core::ptr::read_volatile(addr.as_usize() as *const usize)) }
     }
 
-    fn handle_write(&self, addr: GuestPhysAddr, width: usize, val: usize) {
+    fn handle_write(&self, addr: GuestPhysAddr, _width: usize, val: usize) {
         unsafe {
             core::ptr::write_volatile(addr.as_usize() as *mut usize, val);
         }

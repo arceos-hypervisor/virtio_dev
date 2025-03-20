@@ -1,5 +1,5 @@
 [package]
-name = "virtio-dev"
+name = "virtio_dev"
 version = "0.1.0"
 edition = "2024"
 description = "A Rust implementation for Virtio device interfaces."
