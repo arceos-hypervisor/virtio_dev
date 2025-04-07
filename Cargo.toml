@@ -2,9 +2,9 @@
 resolver = "2"
 
 members =  [
-	"virtio-blk",
-	"virtio-queue",
 	"virtio-bindings",
+	"virtio-queue",
+	"axvirtio",
 ]
 
 [workspace.package]
@@ -15,3 +15,9 @@ homepage = ""
 repository = ""
 
 [workspace.dependencies]
+virtio-bindings = { path = "virtio-bindings" }
+axvirtio = { path = "virtio" }
+
+vm-memory = "0.16.0"
+vmm-sys-util = "0.13.0"
+

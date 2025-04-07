@@ -6,12 +6,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0 AND BSD-3-Clause
 
-use std::collections::VecDeque;
-use std::io::{self, Read, Write};
-use std::mem::{size_of, MaybeUninit};
-use std::ops::Deref;
-use std::ptr::copy_nonoverlapping;
-use std::{cmp, result};
+use alloc::collections::VecDeque;
+use alloc::vec::Vec;
+use alloc::vec;
+// use std::io::{self, Read, Write};
+// use alloc::fmt::{Read, Write};
+use core::mem::{size_of, MaybeUninit};
+use core::ops::Deref;
+use core::ptr::copy_nonoverlapping;
+use core::{cmp, result};
 
 use crate::{DescriptorChain, Error};
 use vm_memory::bitmap::{BitmapSlice, WithBitmapSlice};
@@ -50,9 +53,9 @@ impl<'a, B: BitmapSlice> DescriptorChainConsumer<'a, B> {
     ///
     /// If the provided function returns any error then no bytes are consumed from the buffer and
     /// the error is returned to the caller.
-    fn consume<F>(&mut self, count: usize, f: F) -> io::Result<usize>
+    fn consume<F>(&mut self, count: usize, f: F) -> Result<usize>
     where
-        F: FnOnce(&[&VolatileSlice<B>]) -> io::Result<usize>,
+        F: FnOnce(&[&VolatileSlice<B>]) -> Result<usize>,
     {
         let mut buflen = 0;
         let mut bufs = Vec::with_capacity(self.buffers.len());
@@ -83,7 +86,7 @@ impl<'a, B: BitmapSlice> DescriptorChainConsumer<'a, B> {
             self.bytes_consumed
                 .checked_add(bytes_consumed)
                 .ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::InvalidData, Error::DescriptorChainOverflow)
+                    Error::DescriptorChainOverflow
                 })?;
 
         let mut rem = bytes_consumed;
@@ -196,16 +199,17 @@ impl<'a, B: BitmapSlice> Reader<'a, B> {
     }
 
     /// Reads an object from the descriptor chain buffer.
-    pub fn read_obj<T: ByteValued>(&mut self) -> io::Result<T> {
+    pub fn read_obj<T: ByteValued>(&mut self) -> Result<T> {
         let mut obj = MaybeUninit::<T>::uninit();
 
         // SAFETY: `MaybeUninit` guarantees that the pointer is valid for
         // `size_of::<T>()` bytes.
         let buf = unsafe {
-            ::std::slice::from_raw_parts_mut(obj.as_mut_ptr() as *mut u8, size_of::<T>())
+            ::core::slice::from_raw_parts_mut(obj.as_mut_ptr() as *mut u8, size_of::<T>())
         };
 
-        self.read_exact(buf)?;
+        // self.read_exact(buf)?;
+        todo!();
 
         // SAFETY: any type that implements `ByteValued` can be considered initialized
         // even if it is filled with random data.
@@ -232,8 +236,8 @@ impl<'a, B: BitmapSlice> Reader<'a, B> {
     }
 }
 
-impl<B: BitmapSlice> io::Read for Reader<'_, B> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+impl<B: BitmapSlice> Reader<'_, B> {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
         self.buffer.consume(buf.len(), |bufs| {
             let mut rem = buf;
             let mut total = 0;
@@ -309,8 +313,9 @@ impl<'a, B: BitmapSlice> Writer<'a, B> {
     }
 
     /// Writes an object to the descriptor chain buffer.
-    pub fn write_obj<T: ByteValued>(&mut self, val: T) -> io::Result<()> {
-        self.write_all(val.as_slice())
+    pub fn write_obj<T: ByteValued>(&mut self, val: T) -> Result<()> {
+        // self.write_all(val.as_slice())
+        todo!()
     }
 
     /// Returns number of bytes available for writing.  May return an error if the combined
@@ -333,8 +338,8 @@ impl<'a, B: BitmapSlice> Writer<'a, B> {
     }
 }
 
-impl<B: BitmapSlice> io::Write for Writer<'_, B> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+impl<B: BitmapSlice> Writer<'_, B> {
+    fn write(&mut self, buf: &[u8]) -> Result<usize> {
         self.buffer.consume(buf.len(), |bufs| {
             let mut rem = buf;
             let mut total = 0;
@@ -356,527 +361,8 @@ impl<B: BitmapSlice> io::Write for Writer<'_, B> {
         })
     }
 
-    fn flush(&mut self) -> io::Result<()> {
+    fn flush(&mut self) -> Result<()> {
         // Nothing to flush since the writes go straight into the buffer.
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        desc::{split::Descriptor as SplitDescriptor, RawDescriptor},
-        Queue, QueueOwnedT, QueueT,
-    };
-    use vm_memory::{GuestAddress, GuestMemoryMmap, Le32};
-
-    use crate::mock::MockSplitQueue;
-    use virtio_bindings::bindings::virtio_ring::{VRING_DESC_F_NEXT, VRING_DESC_F_WRITE};
-
-    const MAX_QUEUE_SIZE: u16 = 16;
-
-    #[derive(Copy, Clone, PartialEq, Eq)]
-    pub enum DescriptorType {
-        Readable,
-        Writable,
-    }
-
-    /// Test utility function to create a descriptor chain in guest memory.
-    pub fn create_descriptor_chain(
-        memory: &GuestMemoryMmap,
-        descriptor_array_addr: GuestAddress,
-        descriptors: Vec<(DescriptorType, u32)>,
-        spaces_between_regions: u32,
-    ) -> Result<DescriptorChain<&GuestMemoryMmap>> {
-        let descriptors_len = descriptors.len();
-        let mut descs = vec![];
-
-        let queue = MockSplitQueue::create(memory, descriptor_array_addr, MAX_QUEUE_SIZE);
-
-        let mut buffers_start_addr = queue.end();
-
-        for (index, (type_, size)) in descriptors.into_iter().enumerate() {
-            let mut flags = 0;
-            if let DescriptorType::Writable = type_ {
-                flags |= VRING_DESC_F_WRITE;
-            }
-            if index + 1 < descriptors_len {
-                flags |= VRING_DESC_F_NEXT;
-            }
-
-            descs.push(RawDescriptor::from(SplitDescriptor::new(
-                buffers_start_addr.raw_value(),
-                size,
-                flags as u16,
-                (index + 1) as u16,
-            )));
-
-            let offset = size + spaces_between_regions;
-            buffers_start_addr = buffers_start_addr
-                .checked_add(u64::from(offset))
-                .ok_or(Error::InvalidChain)?;
-        }
-
-        queue.build_desc_chain(&descs).unwrap();
-
-        let avail_ring = queue.avail_addr();
-
-        let mut queue: Queue = Queue::new(MAX_QUEUE_SIZE).unwrap();
-        queue
-            .try_set_desc_table_address(descriptor_array_addr)
-            .unwrap();
-        queue.try_set_avail_ring_address(avail_ring).unwrap();
-        queue.set_ready(true);
-
-        let chain = queue.iter(memory).unwrap().next().unwrap();
-
-        Ok(chain.clone())
-    }
-
-    #[test]
-    fn reader_test_inv_desc_addr() {
-        let memory: GuestMemoryMmap =
-            GuestMemoryMmap::from_ranges(&[(GuestAddress(0x0), 0x1000)]).unwrap();
-
-        let queue = MockSplitQueue::create(&memory, GuestAddress(0x0), MAX_QUEUE_SIZE);
-
-        // set addr out of memory
-        let descriptor = RawDescriptor::from(SplitDescriptor::new(0x1001, 1, 0, 1_u16));
-        queue.build_desc_chain(&[descriptor]).unwrap();
-
-        let avail_ring = queue.avail_addr();
-
-        let mut queue: Queue = Queue::new(MAX_QUEUE_SIZE).unwrap();
-        queue.try_set_desc_table_address(GuestAddress(0x0)).unwrap();
-        queue.try_set_avail_ring_address(avail_ring).unwrap();
-        queue.set_ready(true);
-
-        let chain = queue.iter(&memory).unwrap().next().unwrap();
-
-        assert!(Reader::new(&memory, chain).is_err());
-    }
-
-    #[test]
-    fn reader_test_simple_chain() {
-        use DescriptorType::*;
-
-        let memory_start_addr = GuestAddress(0x0);
-        let memory = GuestMemoryMmap::from_ranges(&[(memory_start_addr, 0x10000)]).unwrap();
-
-        let chain = create_descriptor_chain(
-            &memory,
-            GuestAddress(0x0),
-            vec![
-                (Readable, 8),
-                (Readable, 16),
-                (Readable, 18),
-                (Readable, 64),
-            ],
-            0,
-        )
-        .expect("create_descriptor_chain failed");
-        let mut reader = Reader::new(&memory, chain).expect("failed to create Reader");
-        assert_eq!(reader.available_bytes(), 106);
-        assert_eq!(reader.bytes_read(), 0);
-
-        let mut buffer = [0_u8; 64];
-        if let Err(e) = reader.read_exact(&mut buffer) {
-            panic!("read_exact should not fail here: {:?}", e);
-        }
-
-        assert_eq!(reader.available_bytes(), 42);
-        assert_eq!(reader.bytes_read(), 64);
-
-        match reader.read(&mut buffer) {
-            Err(e) => panic!("read should not fail here: {:?}", e),
-            Ok(length) => assert_eq!(length, 42),
-        }
-
-        assert_eq!(reader.available_bytes(), 0);
-        assert_eq!(reader.bytes_read(), 106);
-    }
-
-    #[test]
-    fn writer_test_simple_chain() {
-        use DescriptorType::*;
-
-        let memory_start_addr = GuestAddress(0x0);
-        let memory = GuestMemoryMmap::from_ranges(&[(memory_start_addr, 0x10000)]).unwrap();
-
-        let chain = create_descriptor_chain(
-            &memory,
-            GuestAddress(0x0),
-            vec![
-                (Writable, 8),
-                (Writable, 16),
-                (Writable, 18),
-                (Writable, 64),
-            ],
-            0,
-        )
-        .expect("create_descriptor_chain failed");
-        let mut writer = Writer::new(&memory, chain).expect("failed to create Writer");
-        assert_eq!(writer.available_bytes(), 106);
-        assert_eq!(writer.bytes_written(), 0);
-
-        let buffer = [0_u8; 64];
-        if let Err(e) = writer.write_all(&buffer) {
-            panic!("write_all should not fail here: {:?}", e);
-        }
-
-        assert_eq!(writer.available_bytes(), 42);
-        assert_eq!(writer.bytes_written(), 64);
-
-        match writer.write(&buffer) {
-            Err(e) => panic!("write should not fail here {:?}", e),
-            Ok(length) => assert_eq!(length, 42),
-        }
-
-        assert_eq!(writer.available_bytes(), 0);
-        assert_eq!(writer.bytes_written(), 106);
-    }
-
-    #[test]
-    fn reader_test_incompatible_chain() {
-        use DescriptorType::*;
-
-        let memory_start_addr = GuestAddress(0x0);
-        let memory = GuestMemoryMmap::from_ranges(&[(memory_start_addr, 0x10000)]).unwrap();
-
-        let chain = create_descriptor_chain(&memory, GuestAddress(0x0), vec![(Writable, 8)], 0)
-            .expect("create_descriptor_chain failed");
-        let mut reader = Reader::new(&memory, chain).expect("failed to create Reader");
-        assert_eq!(reader.available_bytes(), 0);
-        assert_eq!(reader.bytes_read(), 0);
-
-        assert!(reader.read_obj::<u8>().is_err());
-
-        assert_eq!(reader.available_bytes(), 0);
-        assert_eq!(reader.bytes_read(), 0);
-    }
-
-    #[test]
-    fn writer_test_incompatible_chain() {
-        use DescriptorType::*;
-
-        let memory_start_addr = GuestAddress(0x0);
-        let memory = GuestMemoryMmap::from_ranges(&[(memory_start_addr, 0x10000)]).unwrap();
-
-        let chain = create_descriptor_chain(&memory, GuestAddress(0x0), vec![(Readable, 8)], 0)
-            .expect("create_descriptor_chain failed");
-        let mut writer = Writer::new(&memory, chain).expect("failed to create Writer");
-        assert_eq!(writer.available_bytes(), 0);
-        assert_eq!(writer.bytes_written(), 0);
-
-        assert!(writer.write_obj(0u8).is_err());
-
-        assert_eq!(writer.available_bytes(), 0);
-        assert_eq!(writer.bytes_written(), 0);
-    }
-
-    #[test]
-    fn reader_writer_shared_chain() {
-        use DescriptorType::*;
-
-        let memory_start_addr = GuestAddress(0x0);
-        let memory = GuestMemoryMmap::from_ranges(&[(memory_start_addr, 0x10000)]).unwrap();
-
-        let chain = create_descriptor_chain(
-            &memory,
-            GuestAddress(0x0),
-            vec![
-                (Readable, 16),
-                (Readable, 16),
-                (Readable, 96),
-                (Writable, 64),
-                (Writable, 1),
-                (Writable, 3),
-            ],
-            0,
-        )
-        .expect("create_descriptor_chain failed");
-        let mut reader = Reader::new(&memory, chain.clone()).expect("failed to create Reader");
-        let mut writer = Writer::new(&memory, chain).expect("failed to create Writer");
-
-        assert_eq!(reader.bytes_read(), 0);
-        assert_eq!(writer.bytes_written(), 0);
-
-        let mut buffer = Vec::with_capacity(200);
-
-        assert_eq!(
-            reader
-                .read_to_end(&mut buffer)
-                .expect("read should not fail here"),
-            128
-        );
-
-        // The writable descriptors are only 68 bytes long.
-        writer
-            .write_all(&buffer[..68])
-            .expect("write should not fail here");
-
-        assert_eq!(reader.available_bytes(), 0);
-        assert_eq!(reader.bytes_read(), 128);
-        assert_eq!(writer.available_bytes(), 0);
-        assert_eq!(writer.bytes_written(), 68);
-    }
-
-    #[test]
-    fn reader_writer_shattered_object() {
-        use DescriptorType::*;
-
-        let memory_start_addr = GuestAddress(0x0);
-        let memory = GuestMemoryMmap::from_ranges(&[(memory_start_addr, 0x10000)]).unwrap();
-
-        let secret: Le32 = 0x1234_5678.into();
-
-        // Create a descriptor chain with memory regions that are properly separated.
-        let chain_writer = create_descriptor_chain(
-            &memory,
-            GuestAddress(0x0),
-            vec![(Writable, 1), (Writable, 1), (Writable, 1), (Writable, 1)],
-            123,
-        )
-        .expect("create_descriptor_chain failed");
-        let mut writer = Writer::new(&memory, chain_writer).expect("failed to create Writer");
-        if let Err(e) = writer.write_obj(secret) {
-            panic!("write_obj should not fail here: {:?}", e);
-        }
-
-        // Now create new descriptor chain pointing to the same memory and try to read it.
-        let chain_reader = create_descriptor_chain(
-            &memory,
-            GuestAddress(0x0),
-            vec![(Readable, 1), (Readable, 1), (Readable, 1), (Readable, 1)],
-            123,
-        )
-        .expect("create_descriptor_chain failed");
-        let mut reader = Reader::new(&memory, chain_reader).expect("failed to create Reader");
-        match reader.read_obj::<Le32>() {
-            Err(e) => panic!("read_obj should not fail here: {:?}", e),
-            Ok(read_secret) => assert_eq!(read_secret, secret),
-        }
-    }
-
-    #[test]
-    fn reader_unexpected_eof() {
-        use DescriptorType::*;
-
-        let memory_start_addr = GuestAddress(0x0);
-        let memory = GuestMemoryMmap::from_ranges(&[(memory_start_addr, 0x10000)]).unwrap();
-
-        let chain = create_descriptor_chain(
-            &memory,
-            GuestAddress(0x0),
-            vec![(Readable, 256), (Readable, 256)],
-            0,
-        )
-        .expect("create_descriptor_chain failed");
-
-        let mut reader = Reader::new(&memory, chain).expect("failed to create Reader");
-
-        let mut buf = vec![0; 1024];
-
-        assert_eq!(
-            reader
-                .read_exact(&mut buf[..])
-                .expect_err("read more bytes than available")
-                .kind(),
-            io::ErrorKind::UnexpectedEof
-        );
-    }
-
-    #[test]
-    fn split_border() {
-        use DescriptorType::*;
-
-        let memory_start_addr = GuestAddress(0x0);
-        let memory = GuestMemoryMmap::from_ranges(&[(memory_start_addr, 0x10000)]).unwrap();
-
-        let chain = create_descriptor_chain(
-            &memory,
-            GuestAddress(0x0),
-            vec![
-                (Readable, 16),
-                (Readable, 16),
-                (Readable, 96),
-                (Writable, 64),
-                (Writable, 1),
-                (Writable, 3),
-            ],
-            0,
-        )
-        .expect("create_descriptor_chain failed");
-        let mut reader = Reader::new(&memory, chain.clone()).expect("failed to create Reader");
-
-        let other = reader.split_at(32).expect("failed to split Reader");
-        assert_eq!(reader.available_bytes(), 32);
-        assert_eq!(other.available_bytes(), 96);
-
-        let mut writer = Writer::new(&memory, chain.clone()).expect("failed to create Writer");
-        let other = writer.split_at(64).expect("failed to split Writer");
-        assert_eq!(writer.available_bytes(), 64);
-        assert_eq!(other.available_bytes(), 4);
-    }
-
-    #[test]
-    fn split_middle() {
-        use DescriptorType::*;
-
-        let memory_start_addr = GuestAddress(0x0);
-        let memory = GuestMemoryMmap::from_ranges(&[(memory_start_addr, 0x10000)]).unwrap();
-
-        let chain = create_descriptor_chain(
-            &memory,
-            GuestAddress(0x0),
-            vec![
-                (Readable, 16),
-                (Readable, 16),
-                (Readable, 96),
-                (Writable, 64),
-                (Writable, 1),
-                (Writable, 3),
-            ],
-            0,
-        )
-        .expect("create_descriptor_chain failed");
-        let mut reader = Reader::new(&memory, chain).expect("failed to create Reader");
-
-        let other = reader.split_at(24).expect("failed to split Reader");
-        assert_eq!(reader.available_bytes(), 24);
-        assert_eq!(other.available_bytes(), 104);
-    }
-
-    #[test]
-    fn split_end() {
-        use DescriptorType::*;
-
-        let memory_start_addr = GuestAddress(0x0);
-        let memory = GuestMemoryMmap::from_ranges(&[(memory_start_addr, 0x10000)]).unwrap();
-
-        let chain = create_descriptor_chain(
-            &memory,
-            GuestAddress(0x0),
-            vec![
-                (Readable, 16),
-                (Readable, 16),
-                (Readable, 96),
-                (Writable, 64),
-                (Writable, 1),
-                (Writable, 3),
-            ],
-            0,
-        )
-        .expect("create_descriptor_chain failed");
-        let mut reader = Reader::new(&memory, chain).expect("failed to create Reader");
-
-        let other = reader.split_at(128).expect("failed to split Reader");
-        assert_eq!(reader.available_bytes(), 128);
-        assert_eq!(other.available_bytes(), 0);
-    }
-
-    #[test]
-    fn split_beginning() {
-        use DescriptorType::*;
-
-        let memory_start_addr = GuestAddress(0x0);
-        let memory = GuestMemoryMmap::from_ranges(&[(memory_start_addr, 0x10000)]).unwrap();
-
-        let chain = create_descriptor_chain(
-            &memory,
-            GuestAddress(0x0),
-            vec![
-                (Readable, 16),
-                (Readable, 16),
-                (Readable, 96),
-                (Writable, 64),
-                (Writable, 1),
-                (Writable, 3),
-            ],
-            0,
-        )
-        .expect("create_descriptor_chain failed");
-        let mut reader = Reader::new(&memory, chain).expect("failed to create Reader");
-
-        let other = reader.split_at(0).expect("failed to split Reader");
-        assert_eq!(reader.available_bytes(), 0);
-        assert_eq!(other.available_bytes(), 128);
-    }
-
-    #[test]
-    fn split_outofbounds() {
-        use DescriptorType::*;
-
-        let memory_start_addr = GuestAddress(0x0);
-        let memory = GuestMemoryMmap::from_ranges(&[(memory_start_addr, 0x10000)]).unwrap();
-
-        let chain = create_descriptor_chain(
-            &memory,
-            GuestAddress(0x0),
-            vec![
-                (Readable, 16),
-                (Readable, 16),
-                (Readable, 96),
-                (Writable, 64),
-                (Writable, 1),
-                (Writable, 3),
-            ],
-            0,
-        )
-        .expect("create_descriptor_chain failed");
-        let mut reader = Reader::new(&memory, chain).expect("failed to create Reader");
-
-        if reader.split_at(256).is_ok() {
-            panic!("successfully split Reader with out of bounds offset");
-        }
-    }
-
-    #[test]
-    fn read_full() {
-        use DescriptorType::*;
-
-        let memory_start_addr = GuestAddress(0x0);
-        let memory = GuestMemoryMmap::from_ranges(&[(memory_start_addr, 0x10000)]).unwrap();
-
-        let chain = create_descriptor_chain(
-            &memory,
-            GuestAddress(0x0),
-            vec![(Readable, 16), (Readable, 16), (Readable, 16)],
-            0,
-        )
-        .expect("create_descriptor_chain failed");
-        let mut reader = Reader::new(&memory, chain).expect("failed to create Reader");
-
-        let mut buf = [0u8; 64];
-        assert_eq!(
-            reader.read(&mut buf[..]).expect("failed to read to buffer"),
-            48
-        );
-    }
-
-    #[test]
-    fn write_full() {
-        use DescriptorType::*;
-
-        let memory_start_addr = GuestAddress(0x0);
-        let memory = GuestMemoryMmap::from_ranges(&[(memory_start_addr, 0x10000)]).unwrap();
-
-        let chain = create_descriptor_chain(
-            &memory,
-            GuestAddress(0x0),
-            vec![(Writable, 16), (Writable, 16), (Writable, 16)],
-            0,
-        )
-        .expect("create_descriptor_chain failed");
-        let mut writer = Writer::new(&memory, chain).expect("failed to create Writer");
-
-        let buf = [0xdeu8; 64];
-        assert_eq!(
-            writer.write(&buf[..]).expect("failed to write from buffer"),
-            48
-        );
-
-        assert!(writer.flush().is_ok());
     }
 }

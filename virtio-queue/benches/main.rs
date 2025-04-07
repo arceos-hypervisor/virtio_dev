@@ -12,7 +12,7 @@ use queue::benchmark_queue;
 
 criterion_group! {
     name = benches;
-    config = Criterion::default().sample_size(200).measurement_time(std::time::Duration::from_secs(20));
+    config = Criterion::default().sample_size(200).measurement_time(core::time::Duration::from_secs(20));
     targets = benchmark_queue
 }
 

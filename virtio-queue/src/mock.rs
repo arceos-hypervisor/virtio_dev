@@ -4,8 +4,10 @@
 //! Utilities used by unit tests and benchmarks for mocking the driver side
 //! of the virtio protocol.
 
-use std::marker::PhantomData;
-use std::mem::size_of;
+use core::marker::PhantomData;
+use core::mem::size_of;
+
+use alloc::vec::Vec;
 
 use vm_memory::{
     Address, ByteValued, Bytes, GuestAddress, GuestMemory, GuestMemoryError, GuestUsize,
@@ -19,7 +21,7 @@ use crate::{
     },
     DescriptorChain, Error, Queue, QueueOwnedT, QueueT,
 };
-use std::fmt::{self, Debug, Display};
+use core::fmt::{self, Debug, Display};
 use virtio_bindings::bindings::virtio_ring::{VRING_DESC_F_INDIRECT, VRING_DESC_F_NEXT};
 
 /// Mock related errors.
@@ -54,7 +56,7 @@ impl Display for MockError {
     }
 }
 
-impl std::error::Error for MockError {}
+impl core::error::Error for MockError {}
 
 /// Wrapper struct used for accessing a particular address of a GuestMemory area.
 pub struct Ref<'a, M, T> {

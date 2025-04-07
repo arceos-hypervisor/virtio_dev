@@ -13,9 +13,12 @@ edition = "2021"
 test-utils = []
 
 [dependencies]
+spin = "0.9"
+
+axaddrspace = { git = "https://github.com/arceos-hypervisor/axaddrspace.git" }
 vm-memory = { workspace = true }
 vmm-sys-util = { workspace = true }
-log = "0.4.17"
+log = "0.4.21"
 virtio-bindings = { path="../virtio-bindings", version = "0.2.5" }
 
 [dev-dependencies]

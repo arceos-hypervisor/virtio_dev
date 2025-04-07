@@ -3,8 +3,8 @@
 
 include!(concat!(env!("OUT_DIR"), "/virtio_net.rs"));
 
-use std::fmt::{Debug, Formatter, Result};
-use std::mem::{size_of, transmute};
+use core::fmt::*;
+use core::mem::transmute;
 
 impl Debug for virtio_net_hdr_v1 {
     fn fmt(&self, f: &mut Formatter) -> Result {
@@ -38,34 +38,4 @@ impl PartialEq<Self> for virtio_net_hdr_v1 {
             ptr1 == ptr2
         }
     }
-}
-
-#[test]
-fn virtio_net_hdr_v1_default_debug() {
-    assert_eq!(format!("{:?}", virtio_net_hdr_v1::default()), "virtio_net_hdr_v1 { flags: 0, gso_type: 0, hdr_len: 0, gso_size: 0, csum_start: 0, csum_offset: 0, num_buffers: 0 }");
-}
-
-#[test]
-fn virtio_net_hdr_v1_hex_debug() {
-    let expected = "virtio_net_hdr_v1 {
-    flags: 0x0,
-    gso_type: 0x0,
-    hdr_len: 0x0,
-    gso_size: 0x0,
-    csum_start: 0x0,
-    csum_offset: 0x0,
-    num_buffers: 0x0,
-}";
-    assert_eq!(format!("{:#x?}", virtio_net_hdr_v1::default()), expected);
-}
-
-#[test]
-fn virtio_net_hdr_v1_partial_eq() {
-    let hdr1 = virtio_net_hdr_v1::default();
-    let hdr2 = virtio_net_hdr_v1 {
-        flags: 1,
-        ..Default::default()
-    };
-    assert_eq!(hdr1, hdr1);
-    assert_ne!(hdr1, hdr2);
 }

@@ -10,6 +10,8 @@ fn generate_bindings(header: &str) {
         .allowlist_file(format!("include/linux/{header}.h"))
         .derive_default(true)
         .derive_partialeq(true)
+        .use_core()  // 使用 core 而不是 std
+        .ctypes_prefix("::core::ffi")  // 使用 core::ffi 而不是 core::os::raw
         .clang_arg("-Iinclude")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .generate()

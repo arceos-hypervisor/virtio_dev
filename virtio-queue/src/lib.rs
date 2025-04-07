@@ -11,13 +11,18 @@
 // SPDX-License-Identifier: Apache-2.0 AND BSD-3-Clause
 
 //! Virtio queue API for backend device drivers to access virtio queues.
-
+#![no_std]
 #![deny(missing_docs)]
 
-use std::fmt::{self, Debug, Display};
-use std::num::Wrapping;
-use std::ops::{Deref, DerefMut};
-use std::sync::atomic::Ordering;
+extern crate alloc;
+
+// use core::fmt::{self, Debug, Display};
+use core::num::Wrapping;
+// use core::ops::{Deref, DerefMut};
+use core::sync::atomic::Ordering;
+
+use core::fmt::{self, Debug, Display};
+use core::ops::{Deref, DerefMut};
 
 use log::error;
 use vm_memory::{GuestMemory, GuestMemoryError, VolatileMemoryError};
@@ -121,7 +126,7 @@ impl Display for Error {
     }
 }
 
-impl std::error::Error for Error {}
+impl core::error::Error for Error {}
 
 /// Trait for objects returned by `QueueT::lock()`.
 pub trait QueueGuard<'a> {
