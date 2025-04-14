@@ -5,6 +5,7 @@
 // use core::io::{self, Seek, SeekFrom};
 // use core::path::{Path, PathBuf};
 
+use alloc::string::String;
 use virtio_blk::stdio_executor;
 
 use crate::device;

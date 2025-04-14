@@ -47,7 +47,7 @@ const VIRTIO_MMIO_INT_VRING: u8 = 0x01;
 const VIRTIO_MMIO_QUEUE_NOTIFY_OFFSET: u64 = 0x50;
 
 // TODO: Make configurable for each device maybe?
-const QUEUE_MAX_SIZE: u16 = 256;
+pub(crate) const QUEUE_MAX_SIZE: u16 = 256;
 
 // Common errors encountered during device creation, configuration, and operation.
 #[derive(Debug)]

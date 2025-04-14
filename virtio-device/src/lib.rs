@@ -13,9 +13,13 @@
 mod mmio;
 mod virtio_config;
 
+extern crate alloc;
+
 use core::result;
 use core::sync::atomic::AtomicU8;
-use core::sync::Arc;
+// use core::sync::Arc;
+use alloc::vec::Vec;
+use alloc::sync::Arc;
 
 use log::warn;
 use virtio_queue::QueueT;

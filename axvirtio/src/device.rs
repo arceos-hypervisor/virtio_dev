@@ -15,12 +15,12 @@ use vm_device::device_manager::MmioManager;
 use vm_device::{DeviceMmio, MutDeviceMmio};
 use vm_memory::GuestAddressSpace;
 
-use crate::virtio::{BLOCK_DEVICE_ID, VIRTIO_BLK_F_RO};
+use crate::block::{BLOCK_DEVICE_ID, VIRTIO_BLK_F_RO};
 use crate::virtio::{CommonConfig, Env, QUEUE_MAX_SIZE, SingleFdSignalQueue};
 
-use super::inorder_handler::InOrderQueueHandler;
-use super::queue_handler::QueueHandler;
-use super::{BlockArgs, Error, Result, build_config_space};
+// use crate::inorder_handler::InOrderQueueHandler;
+// use crate::queue_handler::QueueHandler;
+// use crate::{BlockArgs, Error, Result, build_config_space};
 
 // This Block device can only use the MMIO transport for now, but we plan to reuse large parts of
 // the functionality when we implement virtio PCI as well, for example by having a base generic

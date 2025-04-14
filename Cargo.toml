@@ -4,6 +4,8 @@ resolver = "2"
 members =  [
 	"virtio-bindings",
 	"virtio-queue",
+	"virtio-device",
+	"axvirtio-blk",
 	"axvirtio",
 ]
 
@@ -16,7 +18,10 @@ repository = ""
 
 [workspace.dependencies]
 virtio-bindings = { path = "virtio-bindings" }
-axvirtio = { path = "virtio" }
+virtio-queue = { path = "virtio-queue" }
+virtio-device = { path = "virtio-device" }
+axvirtio-blk = { path = "axvirtio-blk" }
+axvirtio = { path = "axvirtio" }
 
 vm-memory = "0.16.0"
 vmm-sys-util = "0.13.0"
