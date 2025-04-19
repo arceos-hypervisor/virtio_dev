@@ -470,7 +470,7 @@ impl<'a, M: GuestMemory> MockSplitQueue<'a, M> {
                 (desc.flags() | VRING_DESC_F_NEXT as u16, idx as u16 + 1)
             };
             modified_descs.push(RawDescriptor::from(SplitDescriptor::new(
-                desc.addr().0,
+                desc.addr().start,
                 desc.len(),
                 flags,
                 next,

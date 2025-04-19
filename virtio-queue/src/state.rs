@@ -1,5 +1,5 @@
 use crate::{Error, Queue, QueueT};
-use vm_memory::GuestAddress;
+use axaddrspace::GuestPhysAddr;
 
 /// Representation of the `Queue` state.
 ///
@@ -44,9 +44,9 @@ impl TryFrom<QueueState> for Queue {
         q.set_event_idx(q_state.event_idx_enabled);
         q.try_set_size(q_state.size)?;
         q.set_ready(q_state.ready);
-        q.try_set_desc_table_address(GuestAddress(q_state.desc_table))?;
-        q.try_set_avail_ring_address(GuestAddress(q_state.avail_ring))?;
-        q.try_set_used_ring_address(GuestAddress(q_state.used_ring))?;
+        q.try_set_desc_table_address(GuestPhysAddr::from_usize(q_state.desc_table.try_into().unwrap()))?;
+        q.try_set_avail_ring_address(GuestPhysAddr::from_usize(q_state.avail_ring.try_into().unwrap()))?;
+        q.try_set_used_ring_address(GuestPhysAddr::from_usize(q_state.used_ring.try_into().unwrap()))?;
 
         Ok(q)
     }

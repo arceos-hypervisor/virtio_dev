@@ -11,8 +11,9 @@
 // SPDX-License-Identifier: Apache-2.0 AND BSD-3-Clause
 //! split descriptor
 
-use vm_memory::{ByteValued, GuestAddress, Le16, Le32, Le64};
+use crate::guest_memory::{bytes::ByteValued, endian::{Le16, Le32, Le64}};
 
+use axaddrspace::GuestPhysAddr;
 use virtio_bindings::bindings::virtio_ring::{
     VRING_DESC_F_INDIRECT, VRING_DESC_F_NEXT, VRING_DESC_F_WRITE,
 };
@@ -93,8 +94,8 @@ impl Descriptor {
     }
 
     /// Return the guest physical address of the descriptor buffer.
-    pub fn addr(&self) -> GuestAddress {
-        GuestAddress(self.addr.into())
+    pub fn addr(&self) -> GuestPhysAddr {
+        GuestPhysAddr::from_usize(self.addr.to_native() as usize)
     }
 
     /// Return the length of the descriptor buffer.

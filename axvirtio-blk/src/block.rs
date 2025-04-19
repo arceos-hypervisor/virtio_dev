@@ -254,12 +254,39 @@ impl Block {
             _ => return Ok(()), // 其他宽度不支持
         }
 
-        // 由于self是immutable的，但mmio.rs中的write操作需要&mut self
-        // 在实际实现中应将此处改为使用内部可变性，此处简化处理方式
-        debug!(
-            "MMIO write to offset 0x{:x}, width {}, value 0x{:x}",
-            offset, width, val
-        );
+        // 映射到virtio-mmio对应的函数
+        match offset {
+            o @ 0..=0xff => {
+                // 寄存器写入
+                match o as u32 {
+                    VIRTIO_MMIO_DEVICE_FEATURES => {
+                        // if self.device_features_select() == 0 {
+                        //     self.device_features = (self.device_features & !0xffffffff) | (val as u64);
+                        // } else {
+                        //     self.device_features =
+                        //         (self.device_features & 0xffffffff) | ((val as u64) << 32);
+                        // }
+                    }
+                    VIRTIO_MMIO_QUEUE_NOTIFY => {
+                        todo!();
+                        // self.queue_notify(val as u32);
+                    }
+                    VIRTIO_MMIO_STATUS => {
+                        todo!();
+                        // self.ack_device_status(val as u8);
+                    }
+                    _ => warn!("未知的virtio mmio寄存器写入: 0x{:x}", offset),
+                }
+            }
+
+            // 配置空间写入
+            o @ 0x100..=0xfff => {
+                todo!();
+                // self.write_config(o - 0x100, &data[..width]);
+            }
+
+            _ => warn!("未知的virtio mmio寄存器写入: 0x{:x}", offset),
+        }
 
         // 记录关键寄存器的写入
         match offset as u32 {

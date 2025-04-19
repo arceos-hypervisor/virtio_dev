@@ -1,6 +1,9 @@
 //! Descriptor types for virtio queue.
 
-use vm_memory::{ByteValued, Le16, Le32, Le64};
+// use vm_memory::{ByteValued, Le16, Le32, Le64};
+
+use crate::guest_memory::{bytes::ByteValued, endian::{Le16, Le32, Le64}};
+
 
 pub mod packed;
 pub mod split;
@@ -26,7 +29,7 @@ unsafe impl ByteValued for RawDescriptor {}
 impl From<split::Descriptor> for RawDescriptor {
     fn from(desc: split::Descriptor) -> Self {
         RawDescriptor(
-            Le64::from(desc.addr().0),
+            Le64::from(desc.addr().as_usize() as u64),
             Le32::from(desc.len()),
             Le16::from(desc.flags()),
             Le16::from(desc.next()),
@@ -37,7 +40,7 @@ impl From<split::Descriptor> for RawDescriptor {
 impl From<packed::Descriptor> for RawDescriptor {
     fn from(desc: packed::Descriptor) -> Self {
         RawDescriptor(
-            Le64::from(desc.addr().0),
+            Le64::from(desc.addr().as_usize() as u64),
             Le32::from(desc.len()),
             Le16::from(desc.id()),
             Le16::from(desc.flags()),

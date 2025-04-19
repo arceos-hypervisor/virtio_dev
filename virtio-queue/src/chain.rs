@@ -14,17 +14,21 @@ use core::fmt::{self, Debug};
 use core::mem::size_of;
 use core::ops::Deref;
 
-use vm_memory::bitmap::{BitmapSlice, WithBitmapSlice};
-use vm_memory::{Address, Bytes, GuestAddress, GuestMemory, GuestMemoryRegion};
-
+use crate::guest_memory::bitmap::{BitmapSlice, WithBitmapSlice};
+// use vm_memory::bitmap::{BitmapSlice, WithBitmapSlice};
+// use vm_memory::{Address, Bytes, GuestPhysAddr, GuestMemory, GuestMemoryRegion};
+use crate::GuestMemory;
+use crate::guest_memory::bytes::Bytes;
 use crate::{desc::split::Descriptor, Error, Reader, Writer};
+use axaddrspace::GuestPhysAddr;
+use memory_addr::MemoryAddr;
 use virtio_bindings::bindings::virtio_ring::VRING_DESC_ALIGN_SIZE;
-
+use crate::guest_memory::GuestMemoryRegion;
 /// A virtio descriptor chain.
 #[derive(Clone, Debug)]
 pub struct DescriptorChain<M> {
     mem: M,
-    desc_table: GuestAddress,
+    desc_table: GuestPhysAddr,
     queue_size: u16,
     head_index: u16,
     next_index: u16,
@@ -40,7 +44,7 @@ where
 {
     fn with_ttl(
         mem: M,
-        desc_table: GuestAddress,
+        desc_table: GuestPhysAddr,
         queue_size: u16,
         ttl: u16,
         head_index: u16,
@@ -66,7 +70,7 @@ where
     /// * `queue_size` - the size of the queue, which is also the maximum size of a descriptor
     ///                  chain.
     /// * `head_index` - the descriptor index of the chain head.
-    pub(crate) fn new(mem: M, desc_table: GuestAddress, queue_size: u16, head_index: u16) -> Self {
+    pub(crate) fn new(mem: M, desc_table: GuestPhysAddr, queue_size: u16, head_index: u16) -> Self {
         Self::with_ttl(mem, desc_table, queue_size, queue_size, head_index)
     }
 
@@ -162,6 +166,7 @@ where
     /// [`AvailIter`](struct.AvailIter.html), which is the head of the next
     /// _available_ descriptor chain.
     fn next(&mut self) -> Option<Self::Item> {
+        
         if self.ttl == 0 || self.next_index >= self.queue_size {
             return None;
         }
@@ -170,36 +175,37 @@ where
             .desc_table
             // The multiplication can not overflow an u64 since we are multiplying an u16 with a
             // small number.
-            .checked_add(self.next_index as u64 * size_of::<Descriptor>() as u64)?;
-
+            .checked_add(self.next_index as usize * size_of::<Descriptor>() as usize)?;
+        
         // The guest device driver should not touch the descriptor once submitted, so it's safe
         // to use read_obj() here.
-        let desc = self.mem.read_obj::<Descriptor>(desc_addr).ok()?;
+        todo!();
+        // let desc = self.mem.read_obj::<Descriptor>(desc_addr).ok()?;
 
-        if desc.refers_to_indirect_table() {
-            self.switch_to_indirect_table(desc).ok()?;
-            return self.next();
-        }
+        // if desc.refers_to_indirect_table() {
+        //     self.switch_to_indirect_table(desc).ok()?;
+        //     return self.next();
+        // }
 
-        // constructing a chain that is longer than 2^32 bytes is illegal,
-        // let's terminate the iteration if something violated this.
-        // (VIRTIO v1.2, 2.7.5.2: "Drivers MUST NOT add a descriptor chain
-        // longer than 2^32 bytes in total;")
-        match self.yielded_bytes.checked_add(desc.len()) {
-            Some(yielded_bytes) => self.yielded_bytes = yielded_bytes,
-            None => return None,
-        };
+        // // constructing a chain that is longer than 2^32 bytes is illegal,
+        // // let's terminate the iteration if something violated this.
+        // // (VIRTIO v1.2, 2.7.5.2: "Drivers MUST NOT add a descriptor chain
+        // // longer than 2^32 bytes in total;")
+        // match self.yielded_bytes.checked_add(desc.len()) {
+        //     Some(yielded_bytes) => self.yielded_bytes = yielded_bytes,
+        //     None => return None,
+        // };
 
-        if desc.has_next() {
-            self.next_index = desc.next();
-            // It's ok to decrement `self.ttl` here because we check at the start of the method
-            // that it's greater than 0.
-            self.ttl -= 1;
-        } else {
-            self.ttl = 0;
-        }
+        // if desc.has_next() {
+        //     self.next_index = desc.next();
+        //     // It's ok to decrement `self.ttl` here because we check at the start of the method
+        //     // that it's greater than 0.
+        //     self.ttl -= 1;
+        // } else {
+        //     self.ttl = 0;
+        // }
 
-        Some(desc)
+        // Some(desc)
     }
 }
 

@@ -15,15 +15,18 @@ test-utils = []
 [dependencies]
 spin = "0.9"
 
+axaddrspace = { workspace = true }
+memory_addr = "0.3"
 # axaddrspace = { git = "https://github.com/arceos-hypervisor/axaddrspace.git" }
-vm-memory = { workspace = true }
-vmm-sys-util = { workspace = true }
+# vm-memory = { workspace = true }
+# vmm-sys-util = { workspace = true }
 log = "0.4.21"
 virtio-bindings = { path="../virtio-bindings", version = "0.2.5" }
 
 [dev-dependencies]
 criterion = "0.5.1"
-vm-memory = { workspace = true, features = ["backend-mmap", "backend-atomic"] }
+
+# vm-memory = { workspace = true, features = ["backend-mmap", "backend-atomic"] }
 memoffset = "0.9.0"
 
 [[bench]]

@@ -13,7 +13,10 @@ use core::ops::Deref;
 use core::sync::atomic::{fence, Ordering};
 
 use alloc::format;
-use vm_memory::{Address, Bytes, GuestAddress, GuestMemory};
+// use vm_memory::{Address, Bytes, GuestAddr, GuestMemory};
+use axaddrspace::GuestPhysAddr;
+use memory_addr::MemoryAddr;
+use crate::guest_memory::memory::GuestPhysAddrTrait;
 
 use crate::defs::{
     DEFAULT_AVAIL_RING_ADDR, DEFAULT_DESC_TABLE_ADDR, DEFAULT_USED_RING_ADDR,
@@ -21,6 +24,9 @@ use crate::defs::{
     VIRTQ_USED_ELEMENT_SIZE, VIRTQ_USED_RING_HEADER_SIZE, VIRTQ_USED_RING_META_SIZE,
 };
 use crate::desc::{split::VirtqUsedElem, RawDescriptor};
+use crate::guest_memory::GuestMemory;
+use crate::guest_memory::bytes::Bytes;
+use crate::guest_memory::atomic_integer::AtomicInteger;
 use crate::{error, DescriptorChain, Error, QueueGuard, QueueOwnedT, QueueState, QueueT};
 use virtio_bindings::bindings::virtio_ring::VRING_USED_F_NO_NOTIFY;
 
@@ -50,7 +56,7 @@ pub const MAX_QUEUE_SIZE: u16 = 32768;
 ///
 /// // Here the driver would add entries in the available ring and then update the `idx` field of
 /// // the available ring (address = 0x2000 + 2).
-/// m.write_obj(3, GuestAddress(0x2002));
+/// m.write_obj(3, GuestPhysAddr(0x2002));
 ///
 /// loop {
 ///     queue.disable_notification(&m).unwrap();
@@ -100,13 +106,13 @@ pub struct Queue {
     ready: bool,
 
     /// Guest physical address of the descriptor table.
-    desc_table: GuestAddress,
+    desc_table: GuestPhysAddr,
 
     /// Guest physical address of the available ring.
-    avail_ring: GuestAddress,
+    avail_ring: GuestPhysAddr,
 
     /// Guest physical address of the used ring.
-    used_ring: GuestAddress,
+    used_ring: GuestPhysAddr,
 }
 
 impl Queue {
@@ -128,7 +134,7 @@ impl Queue {
     /// This should not be directly used, as the preferred method is
     /// [`QueueT::set_desc_table_address`]. This is a convenience function for implementing
     /// save/restore capabilities.
-    pub fn try_set_desc_table_address(&mut self, desc_table: GuestAddress) -> Result<(), Error> {
+    pub fn try_set_desc_table_address(&mut self, desc_table: GuestPhysAddr) -> Result<(), Error> {
         if desc_table.mask(0xf) != 0 {
             return Err(Error::InvalidDescTableAlign);
         }
@@ -143,7 +149,7 @@ impl Queue {
     /// This should not be directly used, as the preferred method is
     /// [`QueueT::set_avail_ring_address`]. This is a convenience function for implementing
     /// save/restore capabilities.
-    pub fn try_set_avail_ring_address(&mut self, avail_ring: GuestAddress) -> Result<(), Error> {
+    pub fn try_set_avail_ring_address(&mut self, avail_ring: GuestPhysAddr) -> Result<(), Error> {
         if avail_ring.mask(0x1) != 0 {
             return Err(Error::InvalidAvailRingAlign);
         }
@@ -157,7 +163,7 @@ impl Queue {
     /// This should not be directly used, as the preferred method is
     /// [`QueueT::set_used_ring_address`]. This is a convenience function for implementing
     /// save/restore capabilities.
-    pub fn try_set_used_ring_address(&mut self, used_ring: GuestAddress) -> Result<(), Error> {
+    pub fn try_set_used_ring_address(&mut self, used_ring: GuestPhysAddr) -> Result<(), Error> {
         if used_ring.mask(0x3) != 0 {
             return Err(Error::InvalidUsedRingAlign);
         }
@@ -202,11 +208,11 @@ impl Queue {
             VIRTQ_USED_RING_HEADER_SIZE + VIRTQ_USED_ELEMENT_SIZE * u64::from(self.size);
         let addr = self
             .used_ring
-            .checked_add(avail_event_offset)
-            .ok_or(Error::AddressOverflow)?;
+            .add(avail_event_offset as usize);
 
-        mem.store(u16::to_le(val), addr, order)
-            .map_err(Error::GuestMemory)
+            todo!();
+        // mem.store(u16::to_le(val), addr, order)
+        //     .map_err(Error::GuestMemory)
     }
 
     // Set the value of the `flags` field of the used ring, applying the specified ordering.
@@ -216,8 +222,9 @@ impl Queue {
         val: u16,
         order: Ordering,
     ) -> Result<(), Error> {
-        mem.store(u16::to_le(val), self.used_ring, order)
-            .map_err(Error::GuestMemory)
+        todo!();
+        // mem.store(u16::to_le(val), self.used_ring, order)
+        //     .map_err(Error::GuestMemory)
     }
 
     // Write the appropriate values to enable or disable notifications from the driver.
@@ -254,19 +261,20 @@ impl Queue {
     // with the device, but they serve as useful optimizations. So we only ensure access to the
     // virtq_avail.used_event is atomic, but do not need to synchronize with other memory accesses.
     fn used_event<M: GuestMemory>(&self, mem: &M, order: Ordering) -> Result<Wrapping<u16>, Error> {
+        todo!();
         // This can not overflow an u64 since it is working with relatively small numbers compared
         // to u64::MAX.
-        let used_event_offset =
-            VIRTQ_AVAIL_RING_HEADER_SIZE + u64::from(self.size) * VIRTQ_AVAIL_ELEMENT_SIZE;
-        let used_event_addr = self
-            .avail_ring
-            .checked_add(used_event_offset)
-            .ok_or(Error::AddressOverflow)?;
+        // let used_event_offset =
+        //     VIRTQ_AVAIL_RING_HEADER_SIZE + u64::from(self.size) * VIRTQ_AVAIL_ELEMENT_SIZE;
+        // let used_event_addr = self
+        //     .avail_ring
+        //     .checked_add(used_event_offset)
+        //     .ok_or(Error::AddressOverflow)?;
 
-        mem.load(used_event_addr, order)
-            .map(u16::from_le)
-            .map(Wrapping)
-            .map_err(Error::GuestMemory)
+        // mem.load(used_event_addr, order)
+        //     .map(u16::from_le)
+        //     .map(Wrapping)
+        //     .map_err(Error::GuestMemory)
     }
 }
 
@@ -285,9 +293,9 @@ impl QueueT for Queue {
             max_size,
             size: max_size,
             ready: false,
-            desc_table: GuestAddress(DEFAULT_DESC_TABLE_ADDR),
-            avail_ring: GuestAddress(DEFAULT_AVAIL_RING_ADDR),
-            used_ring: GuestAddress(DEFAULT_USED_RING_ADDR),
+            desc_table: GuestPhysAddr::from_usize(DEFAULT_DESC_TABLE_ADDR as usize),
+            avail_ring: GuestPhysAddr::from_usize(DEFAULT_AVAIL_RING_ADDR as usize),
+            used_ring: GuestPhysAddr::from_usize(DEFAULT_USED_RING_ADDR as usize),
             next_avail: Wrapping(0),
             next_used: Wrapping(0),
             event_idx_enabled: false,
@@ -312,32 +320,32 @@ impl QueueT for Queue {
             error!("attempt to use virtio queue that is not marked ready");
             false
         } else if desc_table
-            .checked_add(desc_table_size)
+            .checked_add(desc_table_size.try_into().unwrap())
             .is_none_or(|v| !mem.address_in_range(v))
         {
             error!(
                 "virtio queue descriptor table goes out of bounds: start:0x{:08x} size:0x{:08x}",
-                desc_table.raw_value(),
+                desc_table.as_usize(),
                 desc_table_size
             );
             false
         } else if avail_ring
-            .checked_add(avail_ring_size)
+            .checked_add(avail_ring_size.try_into().unwrap())
             .is_none_or(|v| !mem.address_in_range(v))
         {
             error!(
                 "virtio queue available ring goes out of bounds: start:0x{:08x} size:0x{:08x}",
-                avail_ring.raw_value(),
+                avail_ring.as_usize(),
                 avail_ring_size
             );
             false
         } else if used_ring
-            .checked_add(used_ring_size)
+            .checked_add(used_ring_size.try_into().unwrap())
             .is_none_or(|v| !mem.address_in_range(v))
         {
             error!(
                 "virtio queue used ring goes out of bounds: start:0x{:08x} size:0x{:08x}",
-                used_ring.raw_value(),
+                used_ring.as_usize(),
                 used_ring_size
             );
             false
@@ -349,9 +357,9 @@ impl QueueT for Queue {
     fn reset(&mut self) {
         self.ready = false;
         self.size = self.max_size;
-        self.desc_table = GuestAddress(DEFAULT_DESC_TABLE_ADDR);
-        self.avail_ring = GuestAddress(DEFAULT_AVAIL_RING_ADDR);
-        self.used_ring = GuestAddress(DEFAULT_USED_RING_ADDR);
+        self.desc_table = GuestPhysAddr::from_usize(DEFAULT_DESC_TABLE_ADDR.try_into().unwrap());
+        self.avail_ring = GuestPhysAddr::from_usize(DEFAULT_AVAIL_RING_ADDR.try_into().unwrap());
+        self.used_ring = GuestPhysAddr::from_usize(DEFAULT_USED_RING_ADDR.try_into().unwrap());
         self.next_avail = Wrapping(0);
         self.next_used = Wrapping(0);
         self.num_added = Wrapping(0);
@@ -385,30 +393,30 @@ impl QueueT for Queue {
     }
 
     fn set_desc_table_address(&mut self, low: Option<u32>, high: Option<u32>) {
-        let low = low.unwrap_or(self.desc_table.0 as u32) as u64;
-        let high = high.unwrap_or((self.desc_table.0 >> 32) as u32) as u64;
+        let low = low.unwrap_or(self.desc_table.as_usize() as u32) as u64;
+        let high = high.unwrap_or((self.desc_table.as_usize() >> 32) as u32) as u64;
 
-        let desc_table = GuestAddress((high << 32) | low);
+        let desc_table = GuestPhysAddr::from_usize(((high << 32) | low).try_into().unwrap());
         if self.try_set_desc_table_address(desc_table).is_err() {
             error!("virtio queue descriptor table breaks alignment constraints");
         }
     }
 
     fn set_avail_ring_address(&mut self, low: Option<u32>, high: Option<u32>) {
-        let low = low.unwrap_or(self.avail_ring.0 as u32) as u64;
-        let high = high.unwrap_or((self.avail_ring.0 >> 32) as u32) as u64;
+        let low = low.unwrap_or(self.avail_ring.as_usize() as u32) as u64;
+        let high = high.unwrap_or((self.avail_ring.as_usize() >> 32) as u32) as u64;
 
-        let avail_ring = GuestAddress((high << 32) | low);
+        let avail_ring = GuestPhysAddr::from_usize(((high << 32) | low).try_into().unwrap());
         if self.try_set_avail_ring_address(avail_ring).is_err() {
             error!("virtio queue available ring breaks alignment constraints");
         }
     }
 
     fn set_used_ring_address(&mut self, low: Option<u32>, high: Option<u32>) {
-        let low = low.unwrap_or(self.used_ring.0 as u32) as u64;
-        let high = high.unwrap_or((self.used_ring.0 >> 32) as u32) as u64;
+        let low = low.unwrap_or(self.used_ring.as_usize() as u32) as u64;
+        let high = high.unwrap_or((self.used_ring.as_usize() >> 32) as u32) as u64;
 
-        let used_ring = GuestAddress((high << 32) | low);
+        let used_ring = GuestPhysAddr::from_usize(((high << 32) | low).try_into().unwrap());
         if self.try_set_used_ring_address(used_ring).is_err() {
             error!("virtio queue used ring breaks alignment constraints");
         }
@@ -427,10 +435,11 @@ impl QueueT for Queue {
             .checked_add(2)
             .ok_or(Error::AddressOverflow)?;
 
-        mem.load(addr, order)
-            .map(u16::from_le)
-            .map(Wrapping)
-            .map_err(Error::GuestMemory)
+            todo!();
+        // mem.load(addr, order)
+        //     .map(u16::from_le)
+        //     .map(Wrapping)
+        //     .map_err(Error::GuestMemory)
     }
 
     fn used_idx<M: GuestMemory>(&self, mem: &M, order: Ordering) -> Result<Wrapping<u16>, Error> {
@@ -438,11 +447,11 @@ impl QueueT for Queue {
             .used_ring
             .checked_add(2)
             .ok_or(Error::AddressOverflow)?;
-
-        mem.load(addr, order)
-            .map(u16::from_le)
-            .map(Wrapping)
-            .map_err(Error::GuestMemory)
+        todo!();
+        // mem.load(addr, order)
+        //     .map(u16::from_le)
+        //     .map(Wrapping)
+        //     .map_err(Error::GuestMemory)
     }
 
     fn add_used<M: GuestMemory>(
@@ -465,22 +474,23 @@ impl QueueT for Queue {
         let offset = VIRTQ_USED_RING_HEADER_SIZE + next_used_index * VIRTQ_USED_ELEMENT_SIZE;
         let addr = self
             .used_ring
-            .checked_add(offset)
+            .checked_add(offset.try_into().unwrap())
             .ok_or(Error::AddressOverflow)?;
-        mem.write_obj(VirtqUsedElem::new(head_index.into(), len), addr)
-            .map_err(Error::GuestMemory)?;
+        todo!();
+        // mem.write_obj(VirtqUsedElem::new(head_index.into(), len), addr)
+        //     .map_err(Error::GuestMemory)?;
 
-        self.next_used += Wrapping(1);
-        self.num_added += Wrapping(1);
+        // self.next_used += Wrapping(1);
+        // self.num_added += Wrapping(1);
 
-        mem.store(
-            u16::to_le(self.next_used.0),
-            self.used_ring
-                .checked_add(2)
-                .ok_or(Error::AddressOverflow)?,
-            Ordering::Release,
-        )
-        .map_err(Error::GuestMemory)
+        // mem.store(
+        //     u16::to_le(self.next_used.0),
+        //     self.used_ring
+        //         .checked_add(2)
+        //         .ok_or(Error::AddressOverflow)?,
+        //     Ordering::Release,
+        // )
+        // .map_err(Error::GuestMemory)
     }
 
     fn enable_notification<M: GuestMemory>(&mut self, mem: &M) -> Result<bool, Error> {
@@ -553,15 +563,15 @@ impl QueueT for Queue {
     }
 
     fn desc_table(&self) -> u64 {
-        self.desc_table.0
+        self.desc_table.as_usize().try_into().unwrap()
     }
 
     fn avail_ring(&self) -> u64 {
-        self.avail_ring.0
+        self.avail_ring.as_usize().try_into().unwrap()
     }
 
     fn used_ring(&self) -> u64 {
-        self.used_ring.0
+        self.used_ring.as_usize().try_into().unwrap()
     }
 
     fn event_idx_enabled(&self) -> bool {
@@ -593,7 +603,7 @@ impl QueueOwnedT for Queue {
         // We're checking here that a reset did not happen without re-initializing the queue.
         // TODO: In the future we might want to also check that the other parameters in the
         // queue are valid.
-        if !self.ready || self.avail_ring == GuestAddress(0) {
+        if !self.ready || self.avail_ring == GuestPhysAddr::from_usize(0) {
             return Err(Error::QueueNotReady);
         }
 
@@ -614,7 +624,7 @@ impl QueueOwnedT for Queue {
 /// # use virtio_bindings::bindings::virtio_ring::{VRING_DESC_F_NEXT, VRING_DESC_F_WRITE};
 /// # use virtio_queue::mock::MockSplitQueue;
 /// use virtio_queue::{desc::{split::Descriptor as SplitDescriptor, RawDescriptor}, Queue, QueueOwnedT};
-/// use vm_memory::{GuestAddress, GuestMemoryMmap};
+/// use vm_memory::{GuestPhysAddr, GuestMemoryMmap};
 ///
 /// # fn populate_queue(m: &GuestMemoryMmap) -> Queue {
 /// #    let vq = MockSplitQueue::new(m, 16);
@@ -636,7 +646,7 @@ impl QueueOwnedT for Queue {
 /// #    vq.add_desc_chains(&descs, 0).unwrap();
 /// #    q
 /// # }
-/// let m = &GuestMemoryMmap::<()>::from_ranges(&[(GuestAddress(0), 0x10000)]).unwrap();
+/// let m = &GuestMemoryMmap::<()>::from_ranges(&[(GuestPhysAddr(0), 0x10000)]).unwrap();
 /// // Populate the queue with descriptor chains and update the available ring accordingly.
 /// let mut queue = populate_queue(m);
 /// let mut i = queue.iter(m).unwrap();
@@ -676,8 +686,8 @@ impl QueueOwnedT for Queue {
 #[derive(Debug)]
 pub struct AvailIter<'b, M> {
     mem: M,
-    desc_table: GuestAddress,
-    avail_ring: GuestAddress,
+    desc_table: GuestPhysAddr,
+    avail_ring: GuestPhysAddr,
     queue_size: u16,
     last_index: Wrapping<u16>,
     next_avail: &'b mut Wrapping<u16>,
@@ -747,22 +757,23 @@ where
             u64::from(self.next_avail.0.checked_rem(self.queue_size)?) * VIRTQ_AVAIL_ELEMENT_SIZE;
         let offset = VIRTQ_AVAIL_RING_HEADER_SIZE + elem_off;
 
-        let addr = self.avail_ring.checked_add(offset)?;
-        let head_index: u16 = self
-            .mem
-            .load(addr, Ordering::Acquire)
-            .map(u16::from_le)
-            .map_err(|_| error!("Failed to read from memory {:x}", addr.raw_value()))
-            .ok()?;
+        let addr = self.avail_ring.checked_add(offset.try_into().unwrap())?;
+        todo!();
+        // let head_index: u16 = self
+        //     .mem
+        //     .load(addr, Ordering::Acquire)
+        //     .map(u16::from_le)
+        //     .map_err(|_| error!("Failed to read from memory {:x}", addr.raw_value()))
+        //     .ok()?;
 
-        *self.next_avail += Wrapping(1);
+        // *self.next_avail += Wrapping(1);
 
-        Some(DescriptorChain::new(
-            self.mem.clone(),
-            self.desc_table,
-            self.queue_size,
-            head_index,
-        ))
+        // Some(DescriptorChain::new(
+        //     self.mem.clone(),
+        //     self.desc_table,
+        //     self.queue_size,
+        //     head_index,
+        // ))
     }
 }
 

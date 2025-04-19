@@ -8,9 +8,9 @@ use core::sync::atomic::Ordering;
 use alloc::sync::Arc;
 use spin::{Mutex, MutexGuard};
 
-use vm_memory::GuestMemory;
+// use vm_memory::GuestMemory;
 
-use crate::{DescriptorChain, Error, Queue, QueueGuard, QueueT};
+use crate::{guest_memory::GuestMemory, DescriptorChain, Error, Queue, QueueGuard, QueueT};
 
 /// Struct to maintain information and manipulate state of a virtio queue for multi-threaded
 /// context.

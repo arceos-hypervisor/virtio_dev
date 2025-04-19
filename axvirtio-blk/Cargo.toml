@@ -15,18 +15,6 @@ axdevice_base = { git = "https://github.com/arceos-hypervisor/axdevice_crates.gi
 axaddrspace = { git = "https://github.com/arceos-hypervisor/axaddrspace.git" }
 memory_addr = "0.3"
 
-event-manager = { version = "0.4.0", features = ["remote_endpoint"] }
-kvm-ioctls = "0.21.0"
-linux-loader = "0.13.0"
-
-vm-memory = "0.16.1"
-vm-superio = "0.8.0"
-vmm-sys-util = "0.13.0"
-vm-device = "0.1.0"
-
-virtio-blk = { git = "https://github.com/rust-vmm/vm-virtio.git", features = [
-    "backend-stdio",
-] }
 virtio-device = { workspace = true }
 virtio-queue = { workspace = true }
 virtio-bindings = { workspace = true }

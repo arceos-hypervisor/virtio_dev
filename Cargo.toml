@@ -6,7 +6,8 @@ members =  [
 	"virtio-queue",
 	"virtio-device",
 	"axvirtio-blk",
-	"axvirtio",
+	"vm-memory"
+	# "axvirtio",
 ]
 
 [workspace.package]
@@ -21,8 +22,9 @@ virtio-bindings = { path = "virtio-bindings" }
 virtio-queue = { path = "virtio-queue" }
 virtio-device = { path = "virtio-device" }
 axvirtio-blk = { path = "axvirtio-blk" }
-axvirtio = { path = "axvirtio" }
+# axvirtio = { path = "axvirtio" }
 
-vm-memory = "0.16.0"
-vmm-sys-util = "0.13.0"
+axaddrspace = { git = "https://github.com/arceos-hypervisor/axaddrspace.git" }
+vm-memory = { path = "vm-memory" }
+# vmm-sys-util = "0.13.0"
 
