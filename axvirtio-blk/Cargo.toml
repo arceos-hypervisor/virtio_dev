@@ -13,6 +13,7 @@ axerrno = "0.1.0"
 
 axdevice_base = { git = "https://github.com/arceos-hypervisor/axdevice_crates.git" }
 axaddrspace = { git = "https://github.com/arceos-hypervisor/axaddrspace.git" }
+axhal = { git = "https://github.com/arceos-hypervisor/arceos.git", branch = "vmm" }
 memory_addr = "0.3"
 
 virtio-device = { workspace = true }

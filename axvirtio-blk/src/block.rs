@@ -1,8 +1,11 @@
 use alloc::sync::Arc;
-use axaddrspace::GuestPhysAddr;
+use axaddrspace::{GuestPhysAddr, HostVirtAddr, HostPhysAddr};
 use axerrno::AxResult;
+use core::mem::size_of;
+use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU8, Ordering};
 use log::{debug, warn};
+use memory_addr::MemoryAddr;
 use spin::Mutex;
 use virtio_bindings::virtio_mmio::{
     VIRTIO_MMIO_CONFIG_GENERATION, VIRTIO_MMIO_DEVICE_FEATURES, VIRTIO_MMIO_DEVICE_FEATURES_SEL,
@@ -14,6 +17,7 @@ use virtio_bindings::virtio_mmio::{
     VIRTIO_MMIO_QUEUE_USED_HIGH, VIRTIO_MMIO_QUEUE_USED_LOW, VIRTIO_MMIO_STATUS,
     VIRTIO_MMIO_VENDOR_ID, VIRTIO_MMIO_VERSION,
 };
+use virtio_bindings::bindings::virtio_ring::VRING_USED_F_NO_NOTIFY;
 
 // 定义virtio设备状态常量
 mod status {
@@ -34,6 +38,52 @@ mod status {
 // 定义virtio特性常量
 const VIRTIO_F_RING_EVENT_IDX: u32 = 29;
 
+// 定义virtio中断类型常量
+const VIRTIO_MMIO_INT_VRING: u8 = 0x01; // 队列中断
+const VIRTIO_MMIO_INT_CONFIG: u8 = 0x02; // 配置空间变化中断
+
+// 定义队列相关常量
+const MAX_QUEUE_NUM: usize = 1; // virtio-blk设备只有一个队列
+const DEFAULT_QUEUE_SIZE: u16 = 0x400; // 默认队列大小
+
+// VirtIO 描述符结构
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+struct VirtqDesc {
+    addr: u64,  // 缓冲区的客户机物理地址
+    len: u32,   // 缓冲区长度
+    flags: u16, // 描述符标志
+    next: u16,  // 如果有next标志，则指向下一个描述符
+}
+
+// VirtIO 可用环结构
+#[repr(C)]
+#[derive(Debug)]
+struct VirtqAvail {
+    flags: u16,     // 标志，用于控制中断
+    idx: u16,       // 驱动程序写入的下一个描述符索引
+    ring: [u16; 0], // 可用描述符索引数组，大小为队列大小
+    // 如果启用了event_idx特性，这里还有一个used_event字段
+}
+
+// VirtIO 已用环元素结构
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+struct VirtqUsedElem {
+    id: u32,  // 描述符链的头索引
+    len: u32, // 写入的总字节数
+}
+
+// VirtIO 已用环结构
+#[repr(C)]
+#[derive(Debug)]
+struct VirtqUsed {
+    flags: u16,            // 标志，用于控制中断
+    idx: u16,              // 设备写入的下一个描述符索引
+    ring: [VirtqUsedElem; 0], // 已用描述符元素数组，大小为队列大小
+    // 如果启用了event_idx特性，这里还有一个avail_event字段
+}
+
 // 辅助函数，用于更新当前选择的队列的字段
 fn update_queue_field<F>(device: &Block, f: F)
 where
@@ -42,14 +92,18 @@ where
     if device.check_device_status(status::FEATURES_OK, status::DRIVER_OK | status::FAILED) {
         if let Some(mut queue) = device.selected_queue() {
             f(&mut queue);
-            // 在实际实现中，这里应该将更新后的队列信息保存回设备
-            debug!("Queue updated: {:?}", queue);
+            // 将更新后的队列信息保存回设备
+            if device.update_selected_queue(queue) {
+                debug!("队列已更新: {:?}", queue);
+            } else {
+                warn!("无法更新队列");
+            }
         } else {
-            warn!("update invalid virtio queue");
+            warn!("更新无效的virtio队列");
         }
     } else {
         warn!(
-            "update virtio queue in invalid state 0x{:x}",
+            "在无效状态下更新virtio队列: 0x{:x}",
             device.device_status()
         );
     }
@@ -78,6 +132,7 @@ struct Inner {
 
     // 队列相关
     queue_select: u16, // 当前选择的队列
+    queues: [QueueInfo; MAX_QUEUE_NUM], // 所有队列的信息
 }
 
 pub struct Block {
@@ -90,6 +145,9 @@ pub struct Block {
 impl Block {
     /// 创建一个新的Block实例
     pub fn new(id: u32, size: usize) -> Self {
+        // 初始化队列信息
+        let queues = [QueueInfo::new(DEFAULT_QUEUE_SIZE); MAX_QUEUE_NUM];
+
         Block {
             inner: Mutex::new(Inner {
                 _id: id,
@@ -100,6 +158,7 @@ impl Block {
                 device_features: 0, // 初始不支持任何特性
                 driver_features: 0,
                 queue_select: 0,
+                queues,
             }),
             interrupt_status: Arc::new(AtomicU8::new(0)),
         }
@@ -264,28 +323,239 @@ impl Block {
         warn!("Writing to virtio-blk config space is not supported");
     }
 
+    /// 通知配置空间变化
+    ///
+    /// 当设备的配置空间发生变化时（例如磁盘大小变化），
+    /// 应调用此方法触发配置变化中断
+    pub fn notify_config_changed(&self) {
+        debug!("配置空间变化，触发中断");
+        // 设置VIRTIO_MMIO_INT_CONFIG位，表示配置空间变化
+        self.interrupt_status.fetch_or(VIRTIO_MMIO_INT_CONFIG, Ordering::SeqCst);
+    }
+
     /// 队列通知
+    ///
+    /// 当驱动程序写入VIRTIO_MMIO_QUEUE_NOTIFY寄存器时，会调用此方法
+    /// 参数val表示队列索引，指示哪个队列有新的请求
     pub fn queue_notify(&self, val: u32) {
         debug!("Queue notify: {}", val);
-        // 在实际实现中，这里应当处理IO请求
-        // 作为模拟实现，我们只记录这个通知
-        self.interrupt_status.fetch_or(1, Ordering::SeqCst);
+
+        // 检查队列索引是否有效
+        if val != 0 {
+            warn!("收到无效队列索引的通知: {}", val);
+            return;
+        }
+
+        // 获取队列信息
+        if let Some(queue) = self.selected_queue() {
+            // 检查队列是否已准备好
+            if !queue.ready() {
+                warn!("队列未准备好，忽略通知");
+                return;
+            }
+
+            // 处理队列中的请求
+            self.process_queue(&queue);
+        } else {
+            warn!("无法获取队列信息，忽略通知");
+        }
+
+        // 设置中断状态位，表示队列操作完成
+        self.interrupt_status.fetch_or(VIRTIO_MMIO_INT_VRING, Ordering::SeqCst);
+    }
+
+    /// 处理队列中的请求
+    ///
+    /// 从可用环中获取请求，处理它，然后更新已用环
+    ///
+    /// # 参数
+    /// * `queue` - 队列信息
+    fn process_queue(&self, queue: &QueueInfo) {
+        debug!("处理队列中的请求");
+
+        if !queue.ready() {
+            warn!("队列未准备好，无法处理请求");
+            return;
+        }
+
+        // 获取可用环地址
+        let avail_ring_addr = GuestPhysAddr::from_usize(queue.avail_ring_addr as usize);
+
+        // 读取可用环的idx字段
+        let avail_idx = unsafe {
+            let idx_ptr = (avail_ring_addr.as_usize() + 2) as *const u16;
+            core::ptr::read_volatile(idx_ptr)
+        };
+
+        // 获取下一个要处理的可用描述符索引
+        let next_avail = queue.next_avail();
+
+        // 检查是否有新的请求
+        if next_avail == avail_idx {
+            debug!("没有新的请求需要处理");
+            return;
+        }
+
+        debug!("处理请求: next_avail={}, avail_idx={}", next_avail, avail_idx);
+
+        // 计算可用环中的元素位置
+        // avail ring结构: flags(u16) + idx(u16) + ring[queue_size]
+        // 每个ring元素: desc_index(u16)
+        let elem_offset = 4 + (next_avail as usize % queue.size() as usize) * 2;
+        let elem_addr = avail_ring_addr.checked_add(elem_offset).unwrap();
+
+        // 读取描述符索引
+        let desc_index = unsafe {
+            let desc_idx_ptr = elem_addr.as_usize() as *const u16;
+            core::ptr::read_volatile(desc_idx_ptr)
+        };
+
+        debug!("处理描述符链: head_idx={}", desc_index);
+
+        // 在实际实现中，这里应该:
+        // 1. 遍历描述符链
+        // 2. 读取请求头部，确定操作类型（读/写）
+        // 3. 执行相应的操作
+        // 4. 将结果写回到输出缓冲区
+
+        // 模拟处理请求，假设写入了32字节的数据
+        let bytes_written = 32;
+
+        // 更新used ring
+        self.update_used_ring(queue, desc_index, bytes_written);
+
+        // 更新next_avail
+        let new_next_avail = (next_avail + 1) % queue.size();
+        debug!("更新next_avail: {} -> {}", next_avail, new_next_avail);
+
+        // 创建更新后的队列信息
+        let mut updated_queue = queue.clone();
+        updated_queue.set_next_avail(new_next_avail);
+
+        // 将更新后的队列信息保存回设备
+        if self.update_selected_queue(updated_queue) {
+            debug!("队列状态已更新");
+        } else {
+            warn!("无法更新队列状态");
+        }
+    }
+
+    fn virt_to_phys(self, vaddr: HostVirtAddr) -> HostPhysAddr {
+        axhal::mem::virt_to_phys(vaddr)
+    }
+
+    /// 更新used ring，通知驱动程序请求已完成
+    ///
+    /// # 参数
+    /// * `queue` - 队列信息
+    /// * `desc_index` - 描述符链的头索引
+    /// * `len` - 写入的总字节数
+    fn update_used_ring(&self, queue: &QueueInfo, desc_index: u16, len: u32) {
+        debug!("更新used ring: desc_index={}, len={}", desc_index, len);
+
+        if !queue.ready() {
+            warn!("队列未准备好，无法更新used ring");
+            return;
+        }
+
+        // 计算used ring中的元素位置
+        let used_ring_addr = GuestPhysAddr::from_usize((queue.used_ring_addr) as usize);
+        let next_used = queue.next_used();
+
+        // 计算used ring元素的地址
+        // used ring结构: flags(u16) + idx(u16) + ring[queue_size]
+        // 每个ring元素: id(u32) + len(u32)
+        let elem_offset = 4 + (next_used as usize % queue.size() as usize) * 8;
+        let elem_addr = used_ring_addr.checked_add(elem_offset).unwrap();
+
+        // 在实际实现中，这里应该写入客户机内存
+        // 1. 写入描述符索引和长度
+        unsafe {
+            // 写入id (u32)
+            let id_ptr = elem_addr.as_usize() as *mut u32;
+            core::ptr::write_volatile(id_ptr, desc_index as u32);
+
+            // 写入len (u32)
+            let len_ptr = (elem_addr.as_usize() + 4) as *mut u32;
+            core::ptr::write_volatile(len_ptr, len);
+        }
+
+        let tempused: NonNull<usize> = NonNull::new(1000 as *mut usize).unwrap();
+        debug!("tempused: {:?}", tempused.as_ptr());
+
+        // 2. 更新used ring的idx字段 (内存屏障确保写入顺序)
+        let new_idx = next_used.wrapping_add(1);
+        unsafe {
+            let idx_ptr = (used_ring_addr.as_usize() + 2) as *mut u16;
+            debug!("更新used ring idx: {:?} -> {}", used_ring_addr, new_idx);
+            let paddr = axhal::mem::virt_to_phys(HostVirtAddr::from_ptr_of(idx_ptr));
+            debug!("paddr: {:?}", paddr);
+            // paddr.
+            core::ptr::write_volatile(paddr.as_usize() as *mut u16, new_idx);
+            debug!("更新后的used ring idx: {:?}", core::ptr::read_volatile(idx_ptr));
+        }
+
+        debug!("已更新used ring: desc_index={}, len={}, next_used={} -> {}",
+               desc_index, len, next_used, new_idx);
+
+        // 更新队列的next_used字段
+        let mut updated_queue = queue.clone();
+        updated_queue.set_next_used(new_idx);
+
+        // 将更新后的队列信息保存回设备
+        if self.update_selected_queue(updated_queue) {
+            debug!("队列的next_used已更新");
+        } else {
+            warn!("无法更新队列的next_used");
+        }
+
+        // 3. 如果需要，触发中断
+        // 检查是否需要抑制中断 (VRING_USED_F_NO_NOTIFY)
+        let suppress_interrupt = unsafe {
+            let flags_ptr = used_ring_addr.as_usize() as *const u16;
+            core::ptr::read_volatile(flags_ptr) & (VRING_USED_F_NO_NOTIFY as u16) != 0
+        };
+
+        if !suppress_interrupt {
+            // 触发中断
+            self.interrupt_status.fetch_or(VIRTIO_MMIO_INT_VRING, Ordering::SeqCst);
+            debug!("触发中断通知驱动程序");
+        } else {
+            debug!("抑制中断通知");
+        }
     }
 
     /// 获取选定的队列
     pub fn selected_queue(&self) -> Option<QueueInfo> {
-        // 简化实现，只返回一个固定的队列信息
         let inner = self.inner.lock();
-        if inner.queue_select == 0 {
-            Some(QueueInfo::new(0x400))
+        let queue_select = inner.queue_select as usize;
+
+        if queue_select < MAX_QUEUE_NUM {
+            // 返回选定队列的拷贝
+            Some(inner.queues[queue_select])
         } else {
+            warn!("选择的队列索引超出范围: {}", queue_select);
             None
         }
     }
 
-    /// 获取选定队列的可变引用
+    /// 获取选定队列的可变引用（实际上返回的是拷贝）
     pub fn selected_queue_mut(&self) -> Option<QueueInfo> {
         self.selected_queue()
+    }
+
+    /// 更新选定队列的信息
+    fn update_selected_queue(&self, queue: QueueInfo) -> bool {
+        let mut inner = self.inner.lock();
+        let queue_select = inner.queue_select as usize;
+
+        if queue_select < MAX_QUEUE_NUM {
+            inner.queues[queue_select] = queue;
+            true
+        } else {
+            warn!("尝试更新无效队列: {}", queue_select);
+            false
+        }
     }
 
     /// 模拟 MMIO 读取操作
@@ -320,6 +590,7 @@ impl Block {
                         self.selected_queue().map(|q| q.ready()).unwrap_or(false) as u32
                     }
                     VIRTIO_MMIO_INTERRUPT_STATUS => {
+                        debug!("读取中断状态: {}", self.interrupt_status().load(Ordering::SeqCst));
                         self.interrupt_status().load(Ordering::SeqCst) as u32
                     }
                     VIRTIO_MMIO_STATUS => self.device_status() as u32,
@@ -412,7 +683,26 @@ impl Block {
                         update_queue_field(self, |q| q.set_ready(val == 1));
                     }
                     VIRTIO_MMIO_QUEUE_NOTIFY => {
-                        self.queue_notify(val as u32);
+                        // 检查设备状态是否为DRIVER_OK，只有在设备准备好的状态下才处理通知
+                        if self.check_device_status(status::DRIVER_OK, status::FAILED) {
+                            // 获取当前选择的队列
+                            let queue_idx = val as u32;
+
+                            // 处理队列通知
+                            self.queue_notify(queue_idx);
+
+                            // 在实际实现中，这里应该:
+                            // 1. 检查队列是否已准备好
+                            // 2. 从描述符表中获取请求
+                            // 3. 处理IO请求
+                            // 4. 更新used ring
+                            // 5. 如果需要，触发中断
+
+                            // 记录通知事件
+                            debug!("处理队列 {} 的通知", queue_idx);
+                        } else {
+                            warn!("在无效状态下收到队列通知: 0x{:x}", self.device_status());
+                        }
                     }
                     VIRTIO_MMIO_INTERRUPT_ACK => {
                         if self.check_device_status(status::DRIVER_OK, 0) {
@@ -459,10 +749,16 @@ impl Block {
         // 记录关键寄存器的写入
         match offset as u32 {
             VIRTIO_MMIO_QUEUE_NOTIFY => {
-                debug!("Queue notify: {}", val);
+                // 已在处理函数中记录详细日志，这里不再重复
             }
             VIRTIO_MMIO_STATUS => {
                 debug!("Status register set to: 0x{:x}", val);
+            }
+            VIRTIO_MMIO_DRIVER_FEATURES => {
+                debug!("Driver features set to: 0x{:x} (page: {})", val, self.driver_features_select());
+            }
+            VIRTIO_MMIO_QUEUE_READY => {
+                debug!("Queue ready set to: {}", val);
             }
             _ => {}
         }
@@ -481,6 +777,8 @@ pub struct QueueInfo {
     pub avail_ring_addr: u64,
     pub used_ring_addr: u64,
     pub event_idx: bool,
+    pub next_avail: u16,  // 下一个要处理的可用描述符索引
+    pub next_used: u16,   // 下一个要写入的已用描述符索引
 }
 
 impl QueueInfo {
@@ -494,6 +792,8 @@ impl QueueInfo {
             avail_ring_addr: 0,
             used_ring_addr: 0,
             event_idx: false,
+            next_avail: 0,
+            next_used: 0,
         }
     }
 
@@ -557,5 +857,25 @@ impl QueueInfo {
     /// 设置事件索引标志
     pub fn set_event_idx(&mut self, enabled: bool) {
         self.event_idx = enabled;
+    }
+
+    /// 获取下一个要处理的可用描述符索引
+    pub fn next_avail(&self) -> u16 {
+        self.next_avail
+    }
+
+    /// 设置下一个要处理的可用描述符索引
+    pub fn set_next_avail(&mut self, next_avail: u16) {
+        self.next_avail = next_avail;
+    }
+
+    /// 获取下一个要写入的已用描述符索引
+    pub fn next_used(&self) -> u16 {
+        self.next_used
+    }
+
+    /// 设置下一个要写入的已用描述符索引
+    pub fn set_next_used(&mut self, next_used: u16) {
+        self.next_used = next_used;
     }
 }

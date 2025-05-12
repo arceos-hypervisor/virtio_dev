@@ -37,6 +37,7 @@ impl BaseDeviceOps for Block {
     }
 
     fn handle_write(&self, addr: <GuestPhysAddrRange as DeviceAddrRange>::Addr, width: usize, val: usize) {
+        debug!("MMIO write 0x{:x}: 0x{:x}", addr, val);
         // 调用 Block 的 mmio_write 方法
         if let Err(e) = self.mmio_write(addr, width, val) {
             debug!("MMIO write error: {:?}", e);
