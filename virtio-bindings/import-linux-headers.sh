@@ -21,6 +21,7 @@ mkdir -p "$dst"
 for header in \
 	virtio_blk \
 	virtio_config \
+	virtio_console \
 	virtio_gpu \
 	virtio_ids \
 	virtio_input \

@@ -31,6 +31,7 @@ fn main() {
         "virtio_gpu",
         "virtio_ids",
         "virtio_input",
+        "virtio_console",
         "virtio_mmio",
         "virtio_net",
         "virtio_ring",

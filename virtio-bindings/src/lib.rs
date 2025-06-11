@@ -37,6 +37,10 @@ pub mod virtio_mmio {
     include!(concat!(env!("OUT_DIR"), "/virtio_mmio.rs"));
 }
 
+pub mod virtio_console {
+    include!(concat!(env!("OUT_DIR"), "/virtio_console.rs"));
+}
+
 pub mod virtio_net;
 
 pub mod virtio_ring {
@@ -48,5 +52,5 @@ pub mod virtio_scsi {
 }
 
 pub mod bindings {
-    pub use super::{virtio_blk, virtio_config, virtio_mmio, virtio_net, virtio_ring, virtio_scsi};
+    pub use super::{virtio_blk, virtio_config, virtio_mmio, virtio_net, virtio_ring, virtio_scsi, virtio_console};
 }
