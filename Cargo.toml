@@ -5,8 +5,7 @@ members =  [
 	"virtio-bindings",
 	"virtio-queue",
 	"virtio-device",
-	"axvirtio-blk",
-	"vm-memory"
+	"axvirtio-blk"
 	# "axvirtio",
 ]
 
